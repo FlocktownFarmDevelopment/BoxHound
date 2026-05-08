@@ -1,0 +1,11 @@
+# Customer data — never upload to repo
+*.csv
+*.numbers
+*.pdf
+
+# macOS
+.DS_Store
+
+# IDE / Editor
+.vscode/
+.idea/
