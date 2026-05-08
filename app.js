@@ -1000,10 +1000,15 @@ function exportPinnedCSV() {
     return;
   }
 
-  // Safari / Firefox: open in new tab (Safari blocks programmatic a.click downloads)
+  // Safari / Firefox fallback
   const blob = new Blob(['\ufeff' + csv], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
-  window.open(url, '_blank');
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
