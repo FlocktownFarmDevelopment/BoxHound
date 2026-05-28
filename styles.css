@@ -462,7 +462,8 @@ body {
 .modal {
   background: #fff; border: var(--border);
   border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
-  max-width: 560px; width: 100%;
+  max-width: 560px; width: 100%; max-height: 90vh;
+  display: flex; flex-direction: column;
   animation: modalPop 200ms ease;
 }
 @keyframes modalPop {
@@ -482,7 +483,7 @@ body {
   transition: all var(--transition-fast);
 }
 .modal-close:hover { background: var(--red); color: white; }
-.modal-body { padding: 20px 24px 24px; }
+.modal-body { padding: 20px 24px 24px; overflow-y: auto; flex: 1; }
 .help-step {
   display: flex; align-items: flex-start; gap: 14px;
   margin-bottom: 18px;
@@ -505,3 +506,372 @@ body {
   color: var(--text-secondary); box-shadow: var(--shadow-sm);
 }
 .help-tip strong { color: var(--text-primary); }
+
+/* ===========================
+   Mode Tab Bar
+   =========================== */
+.mode-tabs {
+  display: flex;
+  gap: 0;
+  background: var(--bg-secondary);
+  border: var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  margin: 0 auto 24px;
+  max-width: 440px;
+}
+.mode-tab {
+  flex: 1;
+  padding: 12px 20px;
+  font-family: 'Overpass', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: none;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+  border-right: var(--border);
+}
+.mode-tab:last-child {
+  border-right: none;
+}
+.mode-tab:hover {
+  background: var(--accent-bg);
+}
+.mode-tab.active {
+  background: var(--accent);
+  color: white;
+}
+
+/* ===========================
+   Manifest Mode
+   =========================== */
+.manifest-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+.route-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.route-picker label {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+}
+.route-select {
+  font-family: 'Overpass', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 10px 16px;
+  border: var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  color: var(--text-primary);
+  min-width: 200px;
+}
+.route-select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.manifest-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.manifest-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 18px;
+  font-family: 'Overpass', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+.manifest-btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: var(--shadow);
+}
+.manifest-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: none;
+}
+.manifest-btn-primary {
+  background: var(--accent);
+  color: white;
+}
+.manifest-btn-secondary {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+.manifest-btn-pdf {
+  background: #ef4444;
+  color: white;
+}
+.manifest-btn-excel {
+  background: #3b82f6;
+  color: white;
+}
+
+/* Manifest Stats */
+.manifest-stats {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+.manifest-stat-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--bg-secondary);
+  border: var(--border-thin);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.manifest-stat-chip .stat-number {
+  font-weight: 900;
+  font-size: 1.1rem;
+  color: var(--accent);
+}
+
+/* ===========================
+   Manifest Table
+   =========================== */
+.manifest-table-wrapper {
+  overflow-x: auto;
+  margin-bottom: 32px;
+  border: var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+  background: var(--bg-secondary);
+}
+.manifest-title {
+  text-align: center;
+  font-size: 1.4rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 18px 16px 14px;
+  background: var(--accent);
+  color: white;
+  border-bottom: var(--border);
+}
+.manifest-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+.manifest-table th {
+  padding: 10px 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 0.72rem;
+  text-align: left;
+  background: var(--bg-surface);
+  border-bottom: var(--border);
+  color: var(--text-primary);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.manifest-table th:not(:last-child) {
+  border-right: 1.5px solid #d1d5db;
+}
+.manifest-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid #e5e7eb;
+  color: var(--text-primary);
+  vertical-align: top;
+}
+.manifest-table td:not(:last-child) {
+  border-right: 1px solid #e5e7eb;
+}
+.manifest-table tbody tr:hover {
+  background: var(--accent-bg);
+}
+.manifest-table .col-box {
+  text-align: center;
+  font-weight: 800;
+  width: 52px;
+}
+.manifest-table .col-phone {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.manifest-table .col-instructions {
+  max-width: 220px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+.manifest-table .col-subscription {
+  text-align: center;
+  font-weight: 700;
+  width: 60px;
+}
+.manifest-table .col-empty {
+  text-align: center;
+  width: 60px;
+}
+.manifest-table .totals-row {
+  background: var(--bg-surface);
+  border-top: var(--border);
+}
+.manifest-table .totals-row td {
+  font-weight: 900;
+  font-size: 0.9rem;
+  padding: 12px;
+  border-bottom: none;
+}
+
+/* ===========================
+   Print Styles
+   =========================== */
+@media print {
+  @page { size: landscape; margin: 0.3in; }
+  body { background: white !important; font-size: 16px !important; }
+  .app-header, .mode-tabs, .manifest-controls,
+  .manifest-actions, .manifest-stats,
+  .file-info-bar, .help-btn, .modal-overlay { display: none !important; }
+  .app-container { max-width: 100% !important; padding: 0 !important; width: 100% !important; }
+  .main-content { padding: 0 !important; }
+
+  /* Each route starts on its own page */
+  .manifest-table-wrapper {
+    border: 1.5px solid #000 !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    overflow: visible !important;
+    page-break-inside: auto;
+    break-before: page;
+    margin: 0 !important;
+  }
+  /* Don't page-break before the very first route */
+  .manifest-table-wrapper:first-child {
+    break-before: auto;
+  }
+
+  /* Route title header */
+  .manifest-title {
+    background: #000 !important;
+    color: #fff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    padding: 8px;
+    font-size: 20px;
+    break-after: avoid;
+  }
+
+  /* Force table to fit page width */
+  .manifest-table {
+    font-size: 16px;
+    width: 100% !important;
+    table-layout: fixed;
+  }
+
+  /* Repeat table headers on every page */
+  .manifest-table thead {
+    display: table-header-group;
+  }
+  .manifest-table th {
+    background: #d1d5db !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    font-size: 12px;
+    padding: 5px 4px;
+    white-space: normal !important;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+  }
+  .manifest-table td {
+    padding: 4px;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    overflow: hidden;
+  }
+
+  /* Column widths tuned for landscape letter */
+  .manifest-table .col-box { width: 4%; }
+  .manifest-table .col-phone { width: 10%; white-space: normal !important; }
+  .manifest-table .col-instructions { max-width: none; width: 14%; }
+  .manifest-table .col-subscription { width: 5%; }
+  .manifest-table .col-empty { width: 5%; }
+
+  /* Alternating row colors */
+  .manifest-table tbody tr:nth-child(odd) {
+    background: #fff !important;
+  }
+  .manifest-table tbody tr:nth-child(even) {
+    background: #f0f0f0 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .manifest-table tbody tr:hover { background: none !important; }
+
+  /* Totals row */
+  .manifest-table tbody tr.totals-row,
+  .manifest-table tbody tr.totals-row:nth-child(odd),
+  .manifest-table tbody tr.totals-row:nth-child(even) {
+    background: #d1d5db !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Avoid page breaks inside rows */
+  .manifest-table tr { page-break-inside: avoid; break-inside: avoid; }
+
+  /* Hide add-on mode when printing manifests */
+  #addonMode { display: none !important; }
+}
+
+/* ===========================
+   Responsive — Manifest
+   =========================== */
+@media (max-width: 768px) {
+  .manifest-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .route-picker {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .route-select {
+    min-width: auto;
+    width: 100%;
+  }
+  .manifest-actions {
+    justify-content: stretch;
+  }
+  .manifest-actions .manifest-btn {
+    flex: 1;
+    justify-content: center;
+  }
+  .mode-tabs {
+    max-width: 100%;
+  }
+}

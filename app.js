@@ -47,6 +47,11 @@ let activeItem = null;      // Currently selected item
 let currentSort = 'route';
 let pinnedItems = [];       // Array of { itemName, boxes: [{member, qty}] }
 
+// Manifest Generator State
+let manifestData = new Map();   // routeName → { members: [], date: string }
+let currentRoute = 'all';       // Currently selected route
+let currentMode = 'addon';      // 'addon' or 'manifest'
+
 // =============================================
 // DOM References
 // =============================================
@@ -82,6 +87,23 @@ const dom = {
   pinnedCount:      () => document.getElementById('pinnedCount'),
   pinnedClearBtn:   () => document.getElementById('pinnedClearBtn'),
   pinnedExportBtn:  () => document.getElementById('pinnedExportBtn'),
+  // Manifest mode
+  manifestUploadZone:  () => document.getElementById('manifestUploadZone'),
+  manifestFileInput:   () => document.getElementById('manifestFileInput'),
+  manifestUploadBtn:   () => document.getElementById('manifestUploadBtn'),
+  manifestSection:     () => document.getElementById('manifestSection'),
+  manifestUploadSection: () => document.getElementById('manifestUploadSection'),
+  manifestFileInfoBar: () => document.getElementById('manifestFileInfoBar'),
+  manifestFileName:    () => document.getElementById('manifestFileName'),
+  manifestFileDate:    () => document.getElementById('manifestFileDate'),
+  manifestChangeFileBtn: () => document.getElementById('manifestChangeFileBtn'),
+  routeSelect:         () => document.getElementById('routeSelect'),
+  manifestTableContainer: () => document.getElementById('manifestTableContainer'),
+  downloadManifestBtn: () => document.getElementById('downloadManifestBtn'),
+  downloadAllBtn:      () => document.getElementById('downloadAllBtn'),
+  exportPdfBtn:       () => document.getElementById('exportPdfBtn'),
+  exportExcelBtn:     () => document.getElementById('exportExcelBtn'),
+  manifestStatsContainer: () => document.getElementById('manifestStatsContainer'),
 };
 
 // =============================================
@@ -1260,6 +1282,730 @@ function handleFile(file) {
 }
 
 // =============================================
+// Manifest Generator
+// =============================================
+
+/**
+ * Switch between Add-On Checker and Manifest Generator modes.
+ */
+function switchMode(mode) {
+  currentMode = mode;
+  const addonMode = document.getElementById('addonMode');
+  const manifestMode = document.getElementById('manifestMode');
+
+  document.querySelectorAll('.mode-tab').forEach(tab => {
+    tab.classList.toggle('active', tab.dataset.mode === mode);
+  });
+
+  if (mode === 'addon') {
+    addonMode.style.display = '';
+    manifestMode.style.display = 'none';
+  } else {
+    addonMode.style.display = 'none';
+    manifestMode.style.display = '';
+  }
+}
+
+/**
+ * Parse a Farmigo Distribution CSV into route-grouped manifest data.
+ *
+ * Fixed columns (0-14):
+ *   Location, Route, Last Name, First Name, Primary Phone, Secondary Phone,
+ *   Email, Delivery Date, Address, City, State, Zip Code,
+ *   Pickup Site Instructions, Comments, Modified
+ *
+ * After column 14, subscription data comes in triplets:
+ *   [quantity, unit, name] repeating
+ */
+function parseDistributionCSV(csvText) {
+  const rows = parseCSVRows(csvText);
+  if (rows.length < 2) return new Map();
+
+  const headers = rows[0].map(h => h.trim());
+  const routeIdx = headers.indexOf('Route');
+  const lastNameIdx = headers.indexOf('Last Name');
+  const firstNameIdx = headers.indexOf('First Name');
+  const phoneIdx = headers.indexOf('Primary Phone');
+  const dateIdx = headers.indexOf('Delivery Date');
+  const addressIdx = headers.indexOf('Address');
+  const cityIdx = headers.indexOf('City');
+  const stateIdx = headers.indexOf('State');
+  const zipIdx = headers.indexOf('Zip Code');
+  const instructionsIdx = headers.indexOf('Pickup Site Instructions');
+  const locationIdx = headers.indexOf('Location');
+  const modifiedIdx = headers.indexOf('Modified');
+
+  // Subscription triplets start after 'Modified'
+  const subsStartIdx = modifiedIdx + 1;
+
+  const routeMap = new Map();
+  const routeOrder = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const route = (row[routeIdx] || '').trim();
+    const lastName = (row[lastNameIdx] || '').trim();
+    const firstName = (row[firstNameIdx] || '').trim();
+
+    // Skip empty rows (route separators)
+    if (!route && !lastName && !firstName) continue;
+    if (!lastName && !firstName) continue;
+
+    // Skip Farm Pick-up — no manifest needed for on-farm pickup
+    if (/farm pick-?up/i.test(route)) continue;
+
+    const rawDate = (row[dateIdx] || '').trim();
+    const deliveryDate = parseDeliveryDate(rawDate);
+
+    const subs = extractSubscriptions(row, subsStartIdx);
+
+    const member = {
+      lastName,
+      firstName,
+      phone: (row[phoneIdx] || '').trim(),
+      address: (row[addressIdx] || '').trim(),
+      city: (row[cityIdx] || '').trim(),
+      state: (row[stateIdx] || '').trim(),
+      zip: (row[zipIdx] || '').trim(),
+      instructions: (row[instructionsIdx] || '').trim(),
+      location: (row[locationIdx] || '').trim(),
+      milk: subs.milk,
+      bread: subs.bread,
+    };
+
+    if (!routeMap.has(route)) {
+      routeMap.set(route, { members: [], date: deliveryDate });
+      routeOrder.push(route);
+    }
+    routeMap.get(route).members.push(member);
+  }
+
+  // Assign box numbers within each route.
+  // Members at the same Location (community drop site) share a box number.
+  for (const [, data] of routeMap) {
+    let counter = 0;
+    const locationNumbers = {};
+    data.members.forEach(m => {
+      const loc = m.location;
+      if (loc && locationNumbers[loc] != null) {
+        // Same drop site as a previous member — reuse their box number
+        m.boxNumber = locationNumbers[loc];
+      } else {
+        counter++;
+        m.boxNumber = counter;
+        if (loc) locationNumbers[loc] = counter;
+      }
+    });
+  }
+
+  // Return in order of first appearance
+  const orderedMap = new Map();
+  for (const route of routeOrder) {
+    orderedMap.set(route, routeMap.get(route));
+  }
+  return orderedMap;
+}
+
+/**
+ * Parse "Tuesday, June 9, 2026" → "6/9"
+ */
+function parseDeliveryDate(dateStr) {
+  if (!dateStr) return '';
+  const match = dateStr.match(/(\w+),?\s+(\w+)\s+(\d+),?\s+(\d+)/);
+  if (match) {
+    const monthNames = ['January','February','March','April','May','June',
+                        'July','August','September','October','November','December'];
+    const monthIdx = monthNames.indexOf(match[2]);
+    if (monthIdx !== -1) {
+      return `${monthIdx + 1}/${parseInt(match[3], 10)}`;
+    }
+  }
+  return dateStr;
+}
+
+/**
+ * Extract milk and bread subscription counts from triplet columns.
+ * Eggs intentionally omitted (packed into delivery boxes).
+ */
+function extractSubscriptions(row, startIdx) {
+  let milk = 0;
+  let bread = 0;
+
+  for (let i = startIdx; i + 2 < row.length; i += 3) {
+    const qty = parseInt(row[i], 10);
+    const name = (row[i + 2] || '').trim();
+
+    if (isNaN(qty) || qty === 0 || !name) continue;
+
+    if (/1\/2 Gallon Milk Share/i.test(name)) {
+      milk += qty;
+    } else if (/Balthazar Bread Share/i.test(name)) {
+      bread += qty;
+    }
+  }
+
+  return { milk, bread };
+}
+
+/**
+ * Populate the route dropdown.
+ */
+function renderRouteDropdown(routeMap) {
+  const select = dom.routeSelect();
+  select.innerHTML = '';
+
+  const allOpt = document.createElement('option');
+  allOpt.value = 'all';
+  allOpt.textContent = `All Routes (${routeMap.size})`;
+  select.appendChild(allOpt);
+
+  for (const [routeName, data] of routeMap) {
+    const opt = document.createElement('option');
+    opt.value = routeName;
+    opt.textContent = `${routeName} (${data.members.length} stops)`;
+    select.appendChild(opt);
+  }
+
+  currentRoute = 'all';
+}
+
+/**
+ * Render manifest table(s) for the selected route(s).
+ */
+function renderManifestView() {
+  const container = dom.manifestTableContainer();
+  container.innerHTML = '';
+
+  if (currentRoute === 'all') {
+    for (const [routeName, data] of manifestData) {
+      container.appendChild(buildManifestTableEl(routeName, data));
+    }
+  } else {
+    const data = manifestData.get(currentRoute);
+    if (data) {
+      container.appendChild(buildManifestTableEl(currentRoute, data));
+    }
+  }
+
+  renderManifestStats();
+}
+
+/**
+ * Build an HTML table for a single route manifest.
+ */
+function buildManifestTableEl(routeName, routeData) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'manifest-table-wrapper';
+
+  const title = document.createElement('div');
+  title.className = 'manifest-title';
+  title.textContent = `${routeName.toUpperCase()}  ${routeData.date}`;
+  wrapper.appendChild(title);
+
+  const table = document.createElement('table');
+  table.className = 'manifest-table';
+
+  // Header
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  const columns = [
+    { label: 'BOX #', cls: 'col-box' },
+    { label: 'Last Name', cls: '' },
+    { label: 'First Name', cls: '' },
+    { label: 'Primary Phone', cls: 'col-phone' },
+    { label: 'Address', cls: '' },
+    { label: 'City', cls: '' },
+    { label: 'State', cls: '' },
+    { label: 'Zip Code', cls: '' },
+    { label: 'Pickup Site Instructions', cls: 'col-instructions' },
+    { label: '1/2 Gallon Milk Share', cls: 'col-subscription' },
+    { label: 'Balthazar Bread Share', cls: 'col-subscription' },
+    { label: 'Cooler', cls: 'col-empty' },
+    { label: '# of returned boxes', cls: 'col-empty' },
+  ];
+
+  columns.forEach(col => {
+    const th = document.createElement('th');
+    th.textContent = col.label;
+    if (col.cls) th.className = col.cls;
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  // Body
+  const tbody = document.createElement('tbody');
+  let totalMilk = 0;
+  let totalBread = 0;
+
+  routeData.members.forEach(member => {
+    const tr = document.createElement('tr');
+    const cells = [
+      { val: member.boxNumber, cls: 'col-box' },
+      { val: member.lastName, cls: '' },
+      { val: member.firstName, cls: '' },
+      { val: member.phone, cls: 'col-phone' },
+      { val: member.address, cls: '' },
+      { val: member.city, cls: '' },
+      { val: member.state, cls: '' },
+      { val: member.zip, cls: '' },
+      { val: member.instructions, cls: 'col-instructions' },
+      { val: member.milk ? `${member.milk} Milk` : '', cls: 'col-subscription' },
+      { val: member.bread ? `${member.bread} Bread` : '', cls: 'col-subscription' },
+      { val: '', cls: 'col-empty' },
+      { val: '', cls: 'col-empty' },
+    ];
+
+    cells.forEach(cell => {
+      const td = document.createElement('td');
+      td.textContent = cell.val;
+      if (cell.cls) td.className = cell.cls;
+      tr.appendChild(td);
+    });
+
+    tbody.appendChild(tr);
+    totalMilk += member.milk || 0;
+    totalBread += member.bread || 0;
+  });
+
+  // Totals row
+  const totalsRow = document.createElement('tr');
+  totalsRow.className = 'totals-row';
+  const totalCells = [
+    { val: '', cls: 'col-box' },
+    { val: '', cls: '' }, { val: '', cls: '' }, { val: '', cls: '' },
+    { val: '', cls: '' }, { val: '', cls: '' }, { val: '', cls: '' },
+    { val: '', cls: '' },
+    { val: 'TOTALS', cls: 'col-instructions' },
+    { val: totalMilk ? `${totalMilk} Milk` : '', cls: 'col-subscription' },
+    { val: totalBread ? `${totalBread} Bread` : '', cls: 'col-subscription' },
+    { val: '', cls: 'col-empty' },
+    { val: '', cls: 'col-empty' },
+  ];
+  totalCells.forEach(cell => {
+    const td = document.createElement('td');
+    td.textContent = cell.val;
+    if (cell.cls) td.className = cell.cls;
+    totalsRow.appendChild(td);
+  });
+  tbody.appendChild(totalsRow);
+
+  table.appendChild(tbody);
+  wrapper.appendChild(table);
+  return wrapper;
+}
+
+/**
+ * Render stats chips for the loaded distribution data.
+ */
+function renderManifestStats() {
+  const container = dom.manifestStatsContainer();
+  if (!container) return;
+
+  let totalMembers = 0, totalMilk = 0, totalBread = 0;
+  let routeCount = manifestData.size;
+
+  if (currentRoute !== 'all' && manifestData.has(currentRoute)) {
+    const data = manifestData.get(currentRoute);
+    totalMembers = data.members.length;
+    routeCount = 1;
+    data.members.forEach(m => {
+      totalMilk += m.milk || 0;
+      totalBread += m.bread || 0;
+    });
+  } else {
+    for (const [, data] of manifestData) {
+      totalMembers += data.members.length;
+      data.members.forEach(m => {
+        totalMilk += m.milk || 0;
+        totalBread += m.bread || 0;
+      });
+    }
+  }
+
+  container.innerHTML = `
+    <div class="manifest-stat-chip">
+      <span class="stat-number">${routeCount}</span>
+      <span>Route${routeCount !== 1 ? 's' : ''}</span>
+    </div>
+    <div class="manifest-stat-chip">
+      <span class="stat-number">${totalMembers}</span>
+      <span>Members</span>
+    </div>
+    <div class="manifest-stat-chip">
+      <span class="stat-number">${totalMilk}</span>
+      <span>Milk Shares</span>
+    </div>
+    <div class="manifest-stat-chip">
+      <span class="stat-number">${totalBread}</span>
+      <span>Bread Shares</span>
+    </div>
+  `;
+}
+
+/**
+ * Generate CSV string for a single route manifest.
+ */
+function generateManifestCSV(routeName, routeData) {
+  const headers = [
+    'BOX #', 'Last Name', 'First Name', 'Primary Phone',
+    'Address', 'City', 'State', 'Zip Code',
+    'Pickup Site Instructions', '1/2 Gallon Milk Share',
+    'Balthazar Bread Share', 'Cooler', '# of returned boxes'
+  ];
+
+  const escapeCSV = (val) => {
+    const str = String(val == null ? '' : val);
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+      return '"' + str.replace(/"/g, '""') + '"';
+    }
+    return str;
+  };
+
+  const lines = [];
+  lines.push(escapeCSV(`${routeName.toUpperCase()}  ${routeData.date}`));
+  lines.push(headers.map(escapeCSV).join(','));
+
+  routeData.members.forEach(m => {
+    lines.push([
+      m.boxNumber, m.lastName, m.firstName, m.phone,
+      m.address, m.city, m.state, m.zip,
+      m.instructions, m.milk ? `${m.milk} Milk` : '', m.bread ? `${m.bread} Bread` : '', '', ''
+    ].map(escapeCSV).join(','));
+  });
+
+  // Totals row
+  let totalMilk = 0, totalBread = 0;
+  routeData.members.forEach(m => {
+    totalMilk += m.milk || 0;
+    totalBread += m.bread || 0;
+  });
+  lines.push([
+    '', '', '', '', '', '', '', '', 'TOTALS',
+    totalMilk ? `${totalMilk} Milk` : '', totalBread ? `${totalBread} Bread` : '', '', ''
+  ].map(escapeCSV).join(','));
+
+  return lines.join('\n');
+}
+
+/**
+ * Download a single route manifest as CSV.
+ */
+async function downloadManifestCSV() {
+  if (currentRoute === 'all') {
+    await downloadAllManifestCSVs();
+    return;
+  }
+
+  const data = manifestData.get(currentRoute);
+  if (!data) return;
+
+  const csv = generateManifestCSV(currentRoute, data);
+  const safeRoute = currentRoute.replace(/[^a-zA-Z0-9]/g, '_');
+  const filename = `manifest_${safeRoute}_${data.date.replace('/', '-')}.csv`;
+  downloadBlobFile(csv, filename, 'text/csv');
+}
+
+/**
+ * Download all route manifests as individual CSV files.
+ */
+async function downloadAllManifestCSVs() {
+  for (const [routeName, data] of manifestData) {
+    const csv = generateManifestCSV(routeName, data);
+    const safeRoute = routeName.replace(/[^a-zA-Z0-9]/g, '_');
+    const filename = `manifest_${safeRoute}_${data.date.replace('/', '-')}.csv`;
+    downloadBlobFile(csv, filename, 'text/csv');
+    // Small delay between downloads to avoid browser blocking
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+}
+
+/**
+ * Generic Blob file download helper.
+ */
+function downloadBlobFile(content, filename, mimeType) {
+  const blob = content instanceof Blob ? content : new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Export manifest(s) as a formatted PDF using jsPDF + AutoTable.
+ * Landscape, 12pt font, alternating rows, repeating headers, one route per page.
+ */
+async function exportManifestPDF() {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
+
+  const routes = currentRoute === 'all'
+    ? [...manifestData.entries()]
+    : [[currentRoute, manifestData.get(currentRoute)]];
+
+  const headers = [
+    'BOX #', 'Last Name', 'First Name', 'Phone',
+    'Address', 'City', 'St', 'Zip',
+    'Pickup Instructions', 'Milk', 'Bread', 'Cooler', '# Returned'
+  ];
+
+  routes.forEach(([routeName, routeData], idx) => {
+    if (idx > 0) doc.addPage();
+
+    // Route title
+    doc.setFontSize(16);
+    doc.setFont(undefined, 'bold');
+    const pageW = doc.internal.pageSize.getWidth();
+    doc.text(`${routeName.toUpperCase()}  ${routeData.date}`, pageW / 2, 30, { align: 'center' });
+
+    // Build body rows
+    const body = routeData.members.map(m => [
+      m.boxNumber, m.lastName, m.firstName, m.phone,
+      m.address, m.city, m.state, m.zip,
+      m.instructions, m.milk ? `${m.milk} Milk` : '', m.bread ? `${m.bread} Bread` : '', '', ''
+    ]);
+
+    // Totals row
+    let totalMilk = 0, totalBread = 0;
+    routeData.members.forEach(m => {
+      totalMilk += m.milk || 0;
+      totalBread += m.bread || 0;
+    });
+    body.push([
+      '', '', '', '', '', '', '', '', 'TOTALS',
+      totalMilk ? `${totalMilk} Milk` : '', totalBread ? `${totalBread} Bread` : '', '', ''
+    ]);
+
+    let isFirstPageOfRoute = true;
+    doc.autoTable({
+      head: [headers],
+      body: body,
+      startY: 42,
+      theme: 'grid',
+      styles: {
+        fontSize: 9,
+        cellPadding: 3,
+        lineColor: [0, 0, 0],
+        lineWidth: 0.5,
+        textColor: [0, 0, 0],
+      },
+      headStyles: {
+        fillColor: [60, 60, 60],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        fontSize: 9,
+        halign: 'center',
+      },
+      alternateRowStyles: {
+        fillColor: [235, 235, 235],
+      },
+      bodyStyles: {
+        fillColor: [255, 255, 255],
+      },
+      columnStyles: {
+        0: { halign: 'center', cellWidth: 35 },   // BOX #
+        1: { cellWidth: 70 },                       // Last Name
+        2: { cellWidth: 65 },                       // First Name
+        3: { cellWidth: 72 },                       // Phone
+        4: { cellWidth: 'auto' },                   // Address
+        5: { cellWidth: 55 },                       // City
+        6: { halign: 'center', cellWidth: 22 },     // State
+        7: { halign: 'center', cellWidth: 38 },     // Zip
+        8: { cellWidth: 'auto' },                   // Instructions
+        9: { halign: 'center', cellWidth: 35 },     // Milk
+        10: { halign: 'center', cellWidth: 38 },    // Bread
+        11: { halign: 'center', cellWidth: 40 },    // Cooler
+        12: { halign: 'center', cellWidth: 50 },    // Returned
+      },
+      // Style the totals row (last row)
+      didParseCell: function(data) {
+        if (data.section === 'body' && data.row.index === body.length - 1) {
+          data.cell.styles.fontStyle = 'bold';
+          data.cell.styles.fillColor = [200, 200, 200];
+          data.cell.styles.fontSize = 9;
+        }
+      },
+      // Repeat title on continuation pages of the same route
+      didDrawPage: function(data) {
+        if (!isFirstPageOfRoute) {
+          doc.setFontSize(12);
+          doc.setFont(undefined, 'bold');
+          doc.text(
+            `${routeName.toUpperCase()}  ${routeData.date} (cont.)`,
+            pageW / 2, 20, { align: 'center' }
+          );
+        }
+        isFirstPageOfRoute = false;
+      },
+      showHead: 'everyPage',
+      rowPageBreak: 'avoid',
+      margin: { top: 42, left: 20, right: 20, bottom: 20 },
+    });
+  });
+
+  // Generate filename
+  const dateStr = routes[0][1].date.replace('/', '-');
+  const routeLabel = currentRoute === 'all' ? 'all_routes' : currentRoute.replace(/[^a-zA-Z0-9]/g, '_');
+  doc.save(`manifest_${routeLabel}_${dateStr}.pdf`);
+}
+
+/**
+ * Export manifest(s) as a formatted Excel file using ExcelJS.
+ * Each route gets its own worksheet with styling, alternating rows, and print setup.
+ */
+async function exportManifestExcel() {
+  const workbook = new ExcelJS.Workbook();
+
+  const routes = currentRoute === 'all'
+    ? [...manifestData.entries()]
+    : [[currentRoute, manifestData.get(currentRoute)]];
+
+  const colHeaders = [
+    'BOX #', 'Last Name', 'First Name', 'Primary Phone',
+    'Address', 'City', 'State', 'Zip Code',
+    'Pickup Site Instructions', '1/2 Gallon Milk Share',
+    'Balthazar Bread Share', 'Cooler', '# of returned boxes'
+  ];
+
+  const colWidths = [7, 16, 14, 15, 28, 14, 7, 9, 28, 12, 12, 9, 12];
+
+  const darkFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF333333' } };
+  const headerFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1D5DB' } };
+  const stripeFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F0F0' } };
+  const totalsFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1D5DB' } };
+  const thinBorder = {
+    top: { style: 'thin' }, bottom: { style: 'thin' },
+    left: { style: 'thin' }, right: { style: 'thin' },
+  };
+
+  for (const [routeName, routeData] of routes) {
+    // Sheet name max 31 chars, no special chars
+    const sheetName = routeName.replace(/[\\\/*?\[\]:]/g, '').substring(0, 31);
+    const sheet = workbook.addWorksheet(sheetName);
+
+    // Page setup for printing from Numbers/Excel
+    sheet.pageSetup = {
+      orientation: 'landscape',
+      paperSize: 1,  // Letter
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 0,
+      printTitlesRow: '1:2',  // Repeat title + headers on every printed page
+    };
+
+    // Set column widths
+    sheet.columns = colWidths.map(w => ({ width: w }));
+
+    // Row 1: Route title (merged across all columns)
+    const titleRow = sheet.addRow([`${routeName.toUpperCase()}  ${routeData.date}`]);
+    sheet.mergeCells(1, 1, 1, 13);
+    titleRow.height = 28;
+    titleRow.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
+    titleRow.alignment = { horizontal: 'center', vertical: 'middle' };
+    titleRow.eachCell(cell => {
+      cell.fill = darkFill;
+      cell.border = thinBorder;
+    });
+
+    // Row 2: Column headers
+    const hdrRow = sheet.addRow(colHeaders);
+    hdrRow.font = { bold: true, size: 10 };
+    hdrRow.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    hdrRow.height = 30;
+    hdrRow.eachCell(cell => {
+      cell.fill = headerFill;
+      cell.border = thinBorder;
+    });
+
+    // Data rows
+    let totalMilk = 0, totalBread = 0;
+    routeData.members.forEach((m, idx) => {
+      const row = sheet.addRow([
+        m.boxNumber, m.lastName, m.firstName, m.phone,
+        m.address, m.city, m.state, m.zip,
+        m.instructions, m.milk ? `${m.milk} Milk` : '', m.bread ? `${m.bread} Bread` : '', '', ''
+      ]);
+      row.font = { size: 12 };
+      row.eachCell(cell => {
+        cell.border = thinBorder;
+        if (idx % 2 === 1) cell.fill = stripeFill;
+      });
+      // Center BOX #, State, Zip, Milk, Bread, Cooler, Returned
+      [1, 7, 8, 10, 11, 12, 13].forEach(c => {
+        row.getCell(c).alignment = { horizontal: 'center' };
+      });
+      // Preserve leading zeros on phone and zip
+      row.getCell(4).numFmt = '@';
+      row.getCell(8).numFmt = '@';
+      totalMilk += m.milk || 0;
+      totalBread += m.bread || 0;
+    });
+
+    // Totals row
+    const totRow = sheet.addRow([
+      '', '', '', '', '', '', '', '', 'TOTALS',
+      totalMilk ? `${totalMilk} Milk` : '', totalBread ? `${totalBread} Bread` : '', '', ''
+    ]);
+    totRow.font = { bold: true, size: 12 };
+    totRow.eachCell(cell => {
+      cell.fill = totalsFill;
+      cell.border = thinBorder;
+    });
+    totRow.getCell(9).alignment = { horizontal: 'right' };
+    [10, 11, 12, 13].forEach(c => {
+      totRow.getCell(c).alignment = { horizontal: 'center' };
+    });
+  }
+
+  // Write and download
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
+  const dateStr = routes[0][1].date.replace('/', '-');
+  const routeLabel = currentRoute === 'all' ? 'all_routes' : currentRoute.replace(/[^a-zA-Z0-9]/g, '_');
+  downloadBlobFile(blob, `manifest_${routeLabel}_${dateStr}.xlsx`,
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+
+/**
+ * Handle a Distribution CSV file upload in manifest mode.
+ */
+function handleManifestFile(file) {
+  if (!file || !file.name.toLowerCase().endsWith('.csv')) {
+    alert('Please upload a CSV file.');
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const csvText = e.target.result;
+    manifestData = parseDistributionCSV(csvText);
+
+    if (manifestData.size === 0) {
+      alert('No routes found in this CSV. Make sure it\'s a Farmigo Distribution report.');
+      return;
+    }
+
+    dom.manifestUploadSection().style.display = 'none';
+    dom.manifestSection().style.display = '';
+    dom.manifestFileName().textContent = file.name;
+
+    // Get delivery date from first route
+    const firstRoute = manifestData.values().next().value;
+    dom.manifestFileDate().textContent = firstRoute.date ? `Delivery: ${firstRoute.date}` : '';
+
+    renderRouteDropdown(manifestData);
+    renderManifestView();
+  };
+  reader.readAsText(file);
+}
+
+// =============================================
 // Event Bindings
 // =============================================
 
@@ -1385,4 +2131,87 @@ document.addEventListener('DOMContentLoaded', () => {
       helpModal.classList.remove('visible');
     }
   });
+
+  // =============================================
+  // Manifest Mode Event Bindings
+  // =============================================
+
+  // Mode tab switching
+  document.querySelectorAll('.mode-tab').forEach(tab => {
+    tab.addEventListener('click', () => switchMode(tab.dataset.mode));
+  });
+
+  // Manifest file upload — drag & drop
+  const mUploadZone = dom.manifestUploadZone();
+  if (mUploadZone) {
+    mUploadZone.addEventListener('click', () => dom.manifestFileInput().click());
+    mUploadZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      mUploadZone.classList.add('drag-over');
+    });
+    mUploadZone.addEventListener('dragleave', () => {
+      mUploadZone.classList.remove('drag-over');
+    });
+    mUploadZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      mUploadZone.classList.remove('drag-over');
+      if (e.dataTransfer.files.length) handleManifestFile(e.dataTransfer.files[0]);
+    });
+  }
+
+  // Manifest file input change
+  const mFileInput = dom.manifestFileInput();
+  if (mFileInput) {
+    mFileInput.addEventListener('change', (e) => {
+      if (e.target.files.length) handleManifestFile(e.target.files[0]);
+    });
+  }
+
+  // Manifest upload button
+  const mUploadBtn = dom.manifestUploadBtn();
+  if (mUploadBtn) {
+    mUploadBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dom.manifestFileInput().click();
+    });
+  }
+
+  // Route select change
+  const routeSel = dom.routeSelect();
+  if (routeSel) {
+    routeSel.addEventListener('change', (e) => {
+      currentRoute = e.target.value;
+      renderManifestView();
+    });
+  }
+
+  // Download CSV
+  const dlBtn = dom.downloadManifestBtn();
+  if (dlBtn) dlBtn.addEventListener('click', downloadManifestCSV);
+
+  // Download All
+  const dlAllBtn = dom.downloadAllBtn();
+  if (dlAllBtn) dlAllBtn.addEventListener('click', downloadAllManifestCSVs);
+
+  // Export PDF
+  const pdfBtn = dom.exportPdfBtn();
+  if (pdfBtn) pdfBtn.addEventListener('click', exportManifestPDF);
+
+  // Export Excel
+  const excelBtn = dom.exportExcelBtn();
+  if (excelBtn) excelBtn.addEventListener('click', exportManifestExcel);
+
+  // Manifest change file
+  const mChangeBtn = dom.manifestChangeFileBtn();
+  if (mChangeBtn) {
+    mChangeBtn.addEventListener('click', () => {
+      manifestData = new Map();
+      currentRoute = 'all';
+      dom.manifestSection().style.display = 'none';
+      dom.manifestUploadSection().style.display = 'flex';
+      dom.manifestTableContainer().innerHTML = '';
+      dom.manifestStatsContainer().innerHTML = '';
+      dom.manifestFileInput().value = '';
+    });
+  }
 });

@@ -34,7 +34,7 @@
           </div>
           <div>
             <h1>BoxHound</h1>
-            <p class="subtitle">Flocktown Farm — Add-On Item Checker</p>
+            <p class="subtitle">Flocktown Farm — CSA Packing Tools</p>
           </div>
         </div>
         <button class="help-btn" id="helpBtn" title="How to use BoxHound">?</button>
@@ -61,6 +61,15 @@
 
     <!-- Main Content -->
     <main class="main-content">
+
+      <!-- Mode Tabs -->
+      <div class="mode-tabs" id="modeTabs">
+        <button class="mode-tab active" data-mode="addon">Add-On Checker</button>
+        <button class="mode-tab" data-mode="manifest">Manifest Generator</button>
+      </div>
+
+      <!-- ============ ADD-ON CHECKER MODE ============ -->
+      <div id="addonMode">
 
       <!-- Upload Area -->
       <section class="upload-section" id="uploadSection">
@@ -203,6 +212,108 @@
           <div class="results-list" id="resultsList"></div>
         </div>
       </section>
+
+      </div><!-- /addonMode -->
+
+      <!-- ============ MANIFEST GENERATOR MODE ============ -->
+      <div id="manifestMode" style="display:none;">
+
+        <!-- Manifest Upload Area -->
+        <section class="upload-section" id="manifestUploadSection">
+          <div class="upload-zone" id="manifestUploadZone">
+            <div class="upload-icon">
+              <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+                <rect x="8" y="16" width="48" height="36" rx="4" stroke="currentColor" stroke-width="2" fill="none"/>
+                <path d="M22 36H42" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M22 42H36" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M22 30H42" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M20 16V12H44V16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <h2>Upload Farmigo Distribution CSV</h2>
+            <p>Drag &amp; drop your Distribution report CSV here, or click to browse</p>
+            <input type="file" id="manifestFileInput" accept=".csv" hidden>
+            <button class="upload-btn" id="manifestUploadBtn">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <path d="M10 4V16M4 10H16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              Choose CSV File
+            </button>
+            <p class="upload-hint">Accepts the Distribution report CSV exported from Farmigo</p>
+          </div>
+        </section>
+
+        <!-- Manifest Controls & Table (hidden until data loaded) -->
+        <section class="search-section" id="manifestSection" style="display:none;">
+
+          <!-- File Info Bar -->
+          <div class="file-info-bar" id="manifestFileInfoBar">
+            <div class="file-info-left">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                <path d="M3 2H11L15 6V16H3V2Z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+                <path d="M11 2V6H15" stroke="currentColor" stroke-width="1.5"/>
+              </svg>
+              <span id="manifestFileName">distribution.csv</span>
+              <span class="file-date" id="manifestFileDate"></span>
+            </div>
+            <button class="change-file-btn" id="manifestChangeFileBtn">Change File</button>
+          </div>
+
+          <!-- Stats -->
+          <div class="manifest-stats" id="manifestStatsContainer"></div>
+
+          <!-- Route Picker & Actions -->
+          <div class="manifest-controls">
+            <div class="route-picker">
+              <label for="routeSelect">Select Route:</label>
+              <select class="route-select" id="routeSelect"></select>
+            </div>
+            <div class="manifest-actions">
+              <button class="manifest-btn manifest-btn-primary" id="downloadManifestBtn">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M2 10V13H14V10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M8 2V10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                  <path d="M5 7L8 10L11 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                Download CSV
+              </button>
+              <button class="manifest-btn manifest-btn-secondary" id="downloadAllBtn">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M2 10V13H14V10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M8 2V10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                  <path d="M5 7L8 10L11 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                Download All CSVs
+              </button>
+              <button class="manifest-btn manifest-btn-pdf" id="exportPdfBtn">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <rect x="2" y="1" width="12" height="14" rx="1.5" stroke="currentColor" stroke-width="1.5" fill="none"/>
+                  <path d="M5 5H11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                  <path d="M5 8H11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                  <path d="M5 11H8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+                Export PDF
+              </button>
+              <button class="manifest-btn manifest-btn-excel" id="exportExcelBtn">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <rect x="1" y="1" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5" fill="none"/>
+                  <path d="M1 5H15" stroke="currentColor" stroke-width="1.3"/>
+                  <path d="M1 9H15" stroke="currentColor" stroke-width="1.3"/>
+                  <path d="M5 1V15" stroke="currentColor" stroke-width="1.3"/>
+                  <path d="M10 1V15" stroke="currentColor" stroke-width="1.3"/>
+                </svg>
+                Export Excel
+              </button>
+            </div>
+          </div>
+
+          <!-- Manifest Table(s) -->
+          <div id="manifestTableContainer"></div>
+
+        </section>
+
+      </div><!-- /manifestMode -->
+
     </main>
   </div>
 
@@ -250,6 +361,35 @@
             <p>Click the green <strong>Blank Labels</strong> button in the header to see all members whose labels have no produce swaps or add-on store items — just a share size and any subscription shares (eggs, milk, bread). Click the button again to dismiss the list.</p>
           </div>
         </div>
+        <h3 class="help-section-title" style="margin-top: 24px;">Manifest Generator</h3>
+        <div class="help-step">
+          <span class="help-step-num">1</span>
+          <div>
+            <strong>Switch modes</strong>
+            <p>Click the <strong>Manifest Generator</strong> tab at the top of the page. You can switch back to Add-On Checker at any time.</p>
+          </div>
+        </div>
+        <div class="help-step">
+          <span class="help-step-num">2</span>
+          <div>
+            <strong>Upload the Distribution report</strong>
+            <p>Export a "Distribution" CSV from Farmigo and upload it. BoxHound will automatically parse each delivery route and assign box numbers. Members at the same community drop site share a box number.</p>
+          </div>
+        </div>
+        <div class="help-step">
+          <span class="help-step-num">3</span>
+          <div>
+            <strong>Browse routes</strong>
+            <p>Use the route dropdown to view a single route's manifest or select <strong>All Routes</strong> to see everything. Each manifest shows member info, delivery instructions, and subscription shares (milk &amp; bread).</p>
+          </div>
+        </div>
+        <div class="help-step">
+          <span class="help-step-num">4</span>
+          <div>
+            <strong>Export for drivers</strong>
+            <p><strong>Export PDF</strong> generates a print-ready document with one route per page, alternating row colors, and repeating headers. <strong>Export Excel</strong> creates a formatted .xlsx file (opens in Numbers) with one worksheet per route. You can also <strong>Download CSV</strong> for a plain-text version.</p>
+          </div>
+        </div>
         <div class="help-tip">
           <strong>Keyboard shortcuts:</strong> Cmd+K to focus search &bull; Arrow keys to navigate suggestions &bull; Enter to select &bull; Escape to clear
         </div>
@@ -257,6 +397,9 @@
     </div>
   </div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.4/jspdf.plugin.autotable.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
