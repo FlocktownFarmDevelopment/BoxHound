@@ -1762,12 +1762,42 @@ async function exportManifestPDF() {
     const pageW = doc.internal.pageSize.getWidth();
     doc.text(`${routeName.toUpperCase()}  ${routeData.date}`, pageW / 2, 30, { align: 'center' });
 
-    // Build body rows
-    const body = routeData.members.map(m => [
-      m.boxNumber, m.lastName, m.firstName, m.phone,
-      m.address, m.city, m.state, m.zip,
-      m.instructions, m.milk ? `${m.milk} Milk` : '', m.bread ? `${m.bread} Bread` : '', '', ''
-    ]);
+    // Build body rows.
+    // For community drop sites: hide home addresses (driver doesn't need them),
+    // and only show instructions on the first and last member at each site.
+    const members = routeData.members;
+    const dropSiteRows = new Set();
+    const body = members.map((m, i) => {
+      let showInstructions = true;
+      let isDropSite = false;
+      if (m.location) {
+        const samesite = members.filter(x => x.location === m.location);
+        if (samesite.length > 1) {
+          isDropSite = true;
+          if (samesite.length > 2) {
+            const first = members.indexOf(samesite[0]);
+            const last = members.indexOf(samesite[samesite.length - 1]);
+            if (i !== first && i !== last) showInstructions = false;
+          }
+        }
+      }
+      return [
+        m.boxNumber, m.lastName, m.firstName, m.phone,
+        isDropSite ? 'Drop Site!' : m.address,
+        isDropSite ? '' : m.city,
+        isDropSite ? '' : m.state,
+        isDropSite ? '' : m.zip,
+        showInstructions ? m.instructions : '',
+        m.milk ? `${m.milk} Milk` : '', m.bread ? `${m.bread} Bread` : '', '', ''
+      ];
+    });
+    // Build set of drop site row indices for bold styling
+    members.forEach((m, i) => {
+      if (m.location) {
+        const samesite = members.filter(x => x.location === m.location);
+        if (samesite.length > 1) dropSiteRows.add(i);
+      }
+    });
 
     // Totals row
     let totalMilk = 0, totalBread = 0;
@@ -1821,12 +1851,16 @@ async function exportManifestPDF() {
         11: { halign: 'center', cellWidth: 40 },    // Cooler
         12: { halign: 'center', cellWidth: 50 },    // Returned
       },
-      // Style the totals row (last row)
+      // Style the totals row and bold "Drop Site!" labels
       didParseCell: function(data) {
         if (data.section === 'body' && data.row.index === body.length - 1) {
           data.cell.styles.fontStyle = 'bold';
           data.cell.styles.fillColor = [200, 200, 200];
           data.cell.styles.fontSize = 9;
+        }
+        // Bold the "Drop Site!" address cell
+        if (data.section === 'body' && data.column.index === 4 && dropSiteRows.has(data.row.index)) {
+          data.cell.styles.fontStyle = 'bold';
         }
       },
       // Repeat title on continuation pages of the same route
@@ -1845,6 +1879,13 @@ async function exportManifestPDF() {
       rowPageBreak: 'avoid',
       margin: { top: 42, left: 20, right: 20, bottom: 20 },
     });
+
+    // For double-sided printing: if this route ends on an odd page,
+    // insert a blank page so the next route starts on a fresh sheet.
+    const pageCount = doc.internal.getNumberOfPages();
+    if (pageCount % 2 === 1) {
+      doc.addPage();
+    }
   });
 
   // Generate filename
