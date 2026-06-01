@@ -102,7 +102,7 @@ const dom = {
   downloadManifestBtn: () => document.getElementById('downloadManifestBtn'),
   downloadAllBtn:      () => document.getElementById('downloadAllBtn'),
   exportPdfBtn:       () => document.getElementById('exportPdfBtn'),
-  exportExcelBtn:     () => document.getElementById('exportExcelBtn'),
+  exportAllPdfsBtn:   () => document.getElementById('exportAllPdfsBtn'),
   manifestStatsContainer: () => document.getElementById('manifestStatsContainer'),
 };
 
@@ -1895,122 +1895,19 @@ async function exportManifestPDF() {
 }
 
 /**
- * Export manifest(s) as a formatted Excel file using ExcelJS.
- * Each route gets its own worksheet with styling, alternating rows, and print setup.
+ * Export each route as its own individual PDF file.
+ * Temporarily overrides currentRoute, calls exportManifestPDF for each,
+ * then restores the original selection.
  */
-async function exportManifestExcel() {
-  const workbook = new ExcelJS.Workbook();
+async function exportAllManifestPDFs() {
+  if (manifestData.size === 0) return;
 
-  const routes = currentRoute === 'all'
-    ? [...manifestData.entries()]
-    : [[currentRoute, manifestData.get(currentRoute)]];
-
-  const colHeaders = [
-    'BOX #', 'Last Name', 'First Name', 'Primary Phone',
-    'Address', 'City', 'State', 'Zip Code',
-    'Pickup Site Instructions', '1/2 Gallon Milk Share',
-    'Balthazar Bread Share', 'Cooler', '# of returned boxes'
-  ];
-
-  const colWidths = [7, 16, 14, 15, 28, 14, 7, 9, 28, 12, 12, 9, 12];
-
-  const darkFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF333333' } };
-  const headerFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1D5DB' } };
-  const stripeFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F0F0' } };
-  const totalsFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1D5DB' } };
-  const thinBorder = {
-    top: { style: 'thin' }, bottom: { style: 'thin' },
-    left: { style: 'thin' }, right: { style: 'thin' },
-  };
-
-  for (const [routeName, routeData] of routes) {
-    // Sheet name max 31 chars, no special chars
-    const sheetName = routeName.replace(/[\\\/*?\[\]:]/g, '').substring(0, 31);
-    const sheet = workbook.addWorksheet(sheetName);
-
-    // Page setup for printing from Numbers/Excel
-    sheet.pageSetup = {
-      orientation: 'landscape',
-      paperSize: 1,  // Letter
-      fitToPage: true,
-      fitToWidth: 1,
-      fitToHeight: 0,
-      printTitlesRow: '1:2',  // Repeat title + headers on every printed page
-    };
-
-    // Set column widths
-    sheet.columns = colWidths.map(w => ({ width: w }));
-
-    // Row 1: Route title (merged across all columns)
-    const titleRow = sheet.addRow([`${routeName.toUpperCase()}  ${routeData.date}`]);
-    sheet.mergeCells(1, 1, 1, 13);
-    titleRow.height = 28;
-    titleRow.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
-    titleRow.alignment = { horizontal: 'center', vertical: 'middle' };
-    titleRow.eachCell(cell => {
-      cell.fill = darkFill;
-      cell.border = thinBorder;
-    });
-
-    // Row 2: Column headers
-    const hdrRow = sheet.addRow(colHeaders);
-    hdrRow.font = { bold: true, size: 10 };
-    hdrRow.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-    hdrRow.height = 30;
-    hdrRow.eachCell(cell => {
-      cell.fill = headerFill;
-      cell.border = thinBorder;
-    });
-
-    // Data rows
-    let totalMilk = 0, totalBread = 0;
-    routeData.members.forEach((m, idx) => {
-      const row = sheet.addRow([
-        m.boxNumber, m.lastName, m.firstName, m.phone,
-        m.address, m.city, m.state, m.zip,
-        m.instructions, m.milk ? `${m.milk} Milk` : '', m.bread ? `${m.bread} Bread` : '', '', ''
-      ]);
-      row.font = { size: 12 };
-      row.eachCell(cell => {
-        cell.border = thinBorder;
-        if (idx % 2 === 1) cell.fill = stripeFill;
-      });
-      // Center BOX #, State, Zip, Milk, Bread, Cooler, Returned
-      [1, 7, 8, 10, 11, 12, 13].forEach(c => {
-        row.getCell(c).alignment = { horizontal: 'center' };
-      });
-      // Preserve leading zeros on phone and zip
-      row.getCell(4).numFmt = '@';
-      row.getCell(8).numFmt = '@';
-      totalMilk += m.milk || 0;
-      totalBread += m.bread || 0;
-    });
-
-    // Totals row
-    const totRow = sheet.addRow([
-      '', '', '', '', '', '', '', '', 'TOTALS',
-      totalMilk ? `${totalMilk} Milk` : '', totalBread ? `${totalBread} Bread` : '', '', ''
-    ]);
-    totRow.font = { bold: true, size: 12 };
-    totRow.eachCell(cell => {
-      cell.fill = totalsFill;
-      cell.border = thinBorder;
-    });
-    totRow.getCell(9).alignment = { horizontal: 'right' };
-    [10, 11, 12, 13].forEach(c => {
-      totRow.getCell(c).alignment = { horizontal: 'center' };
-    });
+  const savedRoute = currentRoute;
+  for (const [routeName] of manifestData) {
+    currentRoute = routeName;
+    await exportManifestPDF();
   }
-
-  // Write and download
-  const buffer = await workbook.xlsx.writeBuffer();
-  const blob = new Blob([buffer], {
-    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-  });
-  const dateStr = routes[0][1].date.replace('/', '-');
-  const routeLabel = currentRoute === 'all' ? 'all_routes' : currentRoute.replace(/[^a-zA-Z0-9]/g, '_');
-  downloadBlobFile(blob, `manifest_${routeLabel}_${dateStr}.xlsx`,
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  currentRoute = savedRoute;
 }
 
 /**
@@ -2238,9 +2135,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const pdfBtn = dom.exportPdfBtn();
   if (pdfBtn) pdfBtn.addEventListener('click', exportManifestPDF);
 
-  // Export Excel
-  const excelBtn = dom.exportExcelBtn();
-  if (excelBtn) excelBtn.addEventListener('click', exportManifestExcel);
+  // Export All PDFs
+  const allPdfsBtn = dom.exportAllPdfsBtn();
+  if (allPdfsBtn) allPdfsBtn.addEventListener('click', exportAllManifestPDFs);
 
   // Manifest change file
   const mChangeBtn = dom.manifestChangeFileBtn();

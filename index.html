@@ -294,15 +294,14 @@
                 </svg>
                 Export PDF
               </button>
-              <button class="manifest-btn manifest-btn-excel" id="exportExcelBtn">
+              <button class="manifest-btn manifest-btn-pdf" id="exportAllPdfsBtn">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <rect x="1" y="1" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5" fill="none"/>
-                  <path d="M1 5H15" stroke="currentColor" stroke-width="1.3"/>
-                  <path d="M1 9H15" stroke="currentColor" stroke-width="1.3"/>
-                  <path d="M5 1V15" stroke="currentColor" stroke-width="1.3"/>
-                  <path d="M10 1V15" stroke="currentColor" stroke-width="1.3"/>
+                  <rect x="2" y="1" width="12" height="14" rx="1.5" stroke="currentColor" stroke-width="1.5" fill="none"/>
+                  <path d="M5 5H11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                  <path d="M5 8H11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                  <path d="M5 11H8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
                 </svg>
-                Export Excel
+                Export All PDFs
               </button>
             </div>
           </div>
@@ -387,7 +386,7 @@
           <span class="help-step-num">4</span>
           <div>
             <strong>Export for drivers</strong>
-            <p><strong>Export PDF</strong> generates a print-ready document with one route per page, alternating row colors, and repeating headers. <strong>Export Excel</strong> creates a formatted .xlsx file (opens in Numbers) with one worksheet per route. You can also <strong>Download CSV</strong> for a plain-text version.</p>
+            <p><strong>Export PDF</strong> generates a print-ready document for the selected route (or all routes combined). <strong>Export All PDFs</strong> downloads a separate PDF for each route. You can also <strong>Download CSV</strong> for a plain-text version.</p>
           </div>
         </div>
         <div class="help-tip">
@@ -399,7 +398,7 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.4/jspdf.plugin.autotable.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+
   <script src="app.js"></script>
 </body>
 </html>
