@@ -1902,10 +1902,12 @@ async function exportManifestPDF() {
 async function exportAllManifestPDFs() {
   if (manifestData.size === 0) return;
 
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
   const savedRoute = currentRoute;
   for (const [routeName] of manifestData) {
     currentRoute = routeName;
     await exportManifestPDF();
+    await delay(500); // Prevent browser from blocking rapid downloads
   }
   currentRoute = savedRoute;
 }
