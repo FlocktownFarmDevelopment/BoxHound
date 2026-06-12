@@ -18,6 +18,8 @@ const ADDON_CATEGORIES = {
   MEAT:    { label: 'Meat',      css: 'cat-meat',    color: '#f87171' },
   SHROOMS: { label: 'Mushrooms', css: 'cat-shrooms', color: '#c084fc' },
   HATS:    { label: 'Hats/Merch',css: 'cat-hats',    color: '#f472b6' },
+  MERCH:   { label: 'Merch',     css: 'cat-hats',    color: '#f472b6' },
+  OTHER:   { label: 'Other',     css: 'cat-other',   color: '#94a3b8' },
 };
 
 /**
@@ -50,7 +52,11 @@ let pinnedItems = [];       // Array of { itemName, boxes: [{member, qty}] }
 // Manifest Generator State
 let manifestData = new Map();   // routeName → { members: [], date: string }
 let currentRoute = 'all';       // Currently selected route
-let currentMode = 'addon';      // 'addon' or 'manifest'
+let currentMode = 'addon';      // 'addon', 'manifest', or 'labels'
+
+// Label Maker State
+let labelMembers = [];                   // Parsed members for label generation
+let swapZoneAssignments = new Map();     // englishName → { letter, spanishName }
 
 // =============================================
 // DOM References
@@ -104,6 +110,23 @@ const dom = {
   exportPdfBtn:       () => document.getElementById('exportPdfBtn'),
   exportAllPdfsBtn:   () => document.getElementById('exportAllPdfsBtn'),
   manifestStatsContainer: () => document.getElementById('manifestStatsContainer'),
+  // Label Maker mode
+  labelUploadZone:      () => document.getElementById('labelUploadZone'),
+  labelFileInput:       () => document.getElementById('labelFileInput'),
+  labelUploadBtn:       () => document.getElementById('labelUploadBtn'),
+  labelSection:         () => document.getElementById('labelSection'),
+  labelUploadSection:   () => document.getElementById('labelUploadSection'),
+  labelFileInfoBar:     () => document.getElementById('labelFileInfoBar'),
+  labelFileName:        () => document.getElementById('labelFileName'),
+  labelFileDate:        () => document.getElementById('labelFileDate'),
+  labelChangeFileBtn:   () => document.getElementById('labelChangeFileBtn'),
+  labelStatsContainer:  () => document.getElementById('labelStatsContainer'),
+  labelPreviewContainer:() => document.getElementById('labelPreviewContainer'),
+  printLabelsBtn:       () => document.getElementById('printLabelsBtn'),
+  zoneModal:            () => document.getElementById('zoneModal'),
+  zoneModalClose:       () => document.getElementById('zoneModalClose'),
+  zoneItemsList:        () => document.getElementById('zoneItemsList'),
+  zoneApplyBtn:         () => document.getElementById('zoneApplyBtn'),
 };
 
 // =============================================
@@ -132,6 +155,7 @@ function parseCSV(csvText) {
   const zipIdx         = headers.indexOf('Zip Code');
   const phoneIdx       = headers.indexOf('Primary Phone');
   const emailIdx       = headers.indexOf('Email');
+  const commentsIdx    = headers.indexOf('Comments');
 
   const members = [];
 
@@ -160,6 +184,7 @@ function parseCSV(csvText) {
       state:      (row[stateIdx] || '').trim(),
       zip:        (row[zipIdx] || '').trim(),
       phone:      (row[phoneIdx] || '').trim(),
+      comments:   (row[commentsIdx] || '').trim(),
       boxNumber:  0, // assigned after parsing
     });
   }
@@ -361,9 +386,10 @@ function parseSingleItem(raw) {
 function identifyCategory(itemStr) {
   const upper = itemStr.toUpperCase();
 
-  // Check add-on store categories
+  // Check add-on store categories (whitespace-tolerant inside brackets)
   for (const cat of Object.keys(ADDON_CATEGORIES)) {
-    if (upper.includes(`[${cat}]`)) return cat;
+    const pattern = new RegExp(`\\[\\s*${cat}\\s*\\]`, 'i');
+    if (pattern.test(upper)) return cat;
   }
 
   // Check if it's a produce swap (letter-prefix bracket)
@@ -1292,18 +1318,15 @@ function switchMode(mode) {
   currentMode = mode;
   const addonMode = document.getElementById('addonMode');
   const manifestMode = document.getElementById('manifestMode');
+  const labelMode = document.getElementById('labelMode');
 
   document.querySelectorAll('.mode-tab').forEach(tab => {
     tab.classList.toggle('active', tab.dataset.mode === mode);
   });
 
-  if (mode === 'addon') {
-    addonMode.style.display = '';
-    manifestMode.style.display = 'none';
-  } else {
-    addonMode.style.display = 'none';
-    manifestMode.style.display = '';
-  }
+  addonMode.style.display = mode === 'addon' ? '' : 'none';
+  manifestMode.style.display = mode === 'manifest' ? '' : 'none';
+  labelMode.style.display = mode === 'labels' ? '' : 'none';
 }
 
 /**
@@ -1946,6 +1969,706 @@ function handleManifestFile(file) {
 }
 
 // =============================================
+// Label Maker
+// =============================================
+
+/**
+ * Parse a single item string for label display.
+ * Unlike parseSingleItem(), this preserves:
+ *   - colorCode: hex color string (e.g. 'FF00FF') or null
+ *   - spanishName: the text inside brackets for produce swaps (e.g. 'Espinacas 5oz')
+ *   - fullBracket: the full bracket text for display (e.g. '[D - Espinacas 5oz]')
+ */
+function parseSingleItemForLabel(raw) {
+  if (!raw) return null;
+
+  // Strip leading ___ (quantity indicator in Farmigo)
+  let cleaned = raw.replace(/^___+/, '').trim();
+
+  // Extract color code before stripping
+  let colorCode = null;
+  const colorMatch = cleaned.match(/^###([0-9A-Fa-f]{6})/);
+  if (colorMatch) {
+    colorCode = colorMatch[1];
+    cleaned = cleaned.replace(/^###[0-9A-Fa-f]{6}/, '').trim();
+  }
+
+  // Determine category
+  const category = identifyCategory(cleaned);
+
+  // Extract quantity — look for number before or after bracket
+  let qty = 1;
+  let afterBracket = cleaned;
+
+  if (category === 'produce' || category === 'subscription') {
+    // For produce: qty might be before bracket or after bracket
+    // e.g. "[E - Zanahorias] 1 Orange Carrots (bunch)"
+    const bracketEnd = cleaned.indexOf(']');
+    if (bracketEnd !== -1) {
+      afterBracket = cleaned.substring(bracketEnd + 1).trim();
+      const qtyMatch = afterBracket.match(/^(\d+)\s+/);
+      if (qtyMatch) qty = parseInt(qtyMatch[1], 10);
+    }
+  } else {
+    const qtyMatch = cleaned.match(/^(\d+)\s+/);
+    if (qtyMatch) qty = parseInt(qtyMatch[1], 10);
+  }
+
+  // Extract Spanish name from bracket for produce swaps
+  let spanishName = '';
+  let bracketPrefix = '';
+  let existingLetter = '';
+  if (category === 'produce') {
+    const bracketMatch = cleaned.match(/^\[([^\]]+)\]/);
+    if (bracketMatch) {
+      bracketPrefix = bracketMatch[0]; // e.g. "[E - Zanahorias]"
+      const inner = bracketMatch[1].trim(); // e.g. "E - Zanahorias"
+      // Extract existing zone letter (single letter at start)
+      const letterMatch = inner.match(/^([A-Za-z])\s*[-–]\s*(.*)/);
+      if (letterMatch) {
+        existingLetter = letterMatch[1].toUpperCase();
+        spanishName = letterMatch[2].trim();
+      } else {
+        // No letter prefix, whole thing is Spanish name
+        spanishName = inner;
+      }
+    }
+  }
+
+  // Extract English name
+  let englishName = '';
+  if (category === 'produce') {
+    const bracketEnd = cleaned.indexOf(']');
+    if (bracketEnd !== -1) {
+      let after = cleaned.substring(bracketEnd + 1).trim();
+      after = after.replace(/^\d+\s+/, '').trim();
+      englishName = after;
+    }
+  } else if (category === 'share' || category === 'subscription') {
+    englishName = cleaned.replace(/^\d+\s+/, '').trim();
+  } else {
+    // Add-on: remove [CATEGORY] prefix (whitespace-tolerant)
+    let name = cleaned;
+    for (const cat of Object.keys(ADDON_CATEGORIES)) {
+      const pattern = new RegExp(`\\[\\s*${cat}\\s*\\]`, 'i');
+      if (pattern.test(name)) {
+        name = name.replace(pattern, '').trim();
+        break;
+      }
+    }
+    englishName = name.replace(/^\d+\s+/, '').trim();
+  }
+
+  return {
+    raw,
+    englishName,
+    spanishName,
+    existingLetter,
+    bracketPrefix,
+    qty,
+    category,
+    colorCode,
+  };
+}
+
+/**
+ * Handle a Labels CSV file upload in label maker mode.
+ * Parses the CSV, collects unique swap items, and shows the zone assignment modal.
+ */
+function handleLabelFile(file) {
+  if (!file || !file.name.toLowerCase().endsWith('.csv')) {
+    alert('Please upload a CSV file.');
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const csvText = e.target.result;
+
+    // Reuse the existing parseCSV to get members with box numbers
+    const members = parseCSV(csvText);
+    if (members.length === 0) {
+      alert('No members found. Make sure this is a Farmigo Labels CSV.');
+      return;
+    }
+
+    // Re-parse items with the label-aware parser to preserve colors and Spanish names
+    for (const member of members) {
+      const rawItems = member.items.map(i => i.raw);
+      // Re-parse from raw strings
+      const rawItemStr = (member._rawItems || '');
+      member.labelItems = [];
+      for (const item of member.items) {
+        const labelItem = parseSingleItemForLabel(item.raw);
+        if (labelItem) member.labelItems.push(labelItem);
+      }
+    }
+
+    labelMembers = members;
+
+    // Show file info
+    dom.labelUploadSection().style.display = 'none';
+    dom.labelSection().style.display = '';
+    dom.labelFileName().textContent = file.name;
+
+    // Get date from first member
+    const firstDate = members[0]?.date || '';
+    dom.labelFileDate().textContent = firstDate ? `Delivery: ${firstDate}` : '';
+
+    // Show member count
+    const memberCountEl = document.getElementById('labelMemberCount');
+    if (memberCountEl) {
+      memberCountEl.innerHTML = `
+        <div class="manifest-stat-chip">
+          <span class="stat-number">${members.length}</span> Members
+        </div>
+      `;
+    }
+
+    // Collect unique swap items and show zone assignment modal
+    const swapItems = collectUniqueSwapItems(members);
+    if (swapItems.length > 0) {
+      showZoneAssignmentModal(swapItems);
+    } else {
+      generateLabels();
+    }
+  };
+  reader.readAsText(file);
+}
+
+/**
+ * Collect unique produce swap items across all members.
+ * Returns array of { englishName, spanishName, existingLetter }
+ */
+function collectUniqueSwapItems(members) {
+  const seen = new Map(); // englishName → { spanishName, existingLetter }
+
+  for (const member of members) {
+    for (const item of member.labelItems) {
+      if (item.category === 'produce' && item.englishName) {
+        if (!seen.has(item.englishName)) {
+          seen.set(item.englishName, {
+            spanishName: item.spanishName,
+            existingLetter: item.existingLetter,
+          });
+        }
+      }
+    }
+  }
+
+  // Sort alphabetically by English name
+  return Array.from(seen.entries())
+    .map(([englishName, data]) => ({
+      englishName,
+      spanishName: data.spanishName,
+      existingLetter: data.existingLetter,
+    }))
+    .sort((a, b) => a.englishName.localeCompare(b.englishName));
+}
+
+/**
+ * Render the zone assignment modal with produce swap items.
+ */
+function showZoneAssignmentModal(swapItems) {
+  const list = dom.zoneItemsList();
+  list.innerHTML = '';
+
+  for (const item of swapItems) {
+    const row = document.createElement('div');
+    row.className = 'zone-item-row';
+
+    // Pre-populate from previous assignments or CSV letter
+    const savedLetter = swapZoneAssignments.get(item.englishName)?.letter || item.existingLetter || '';
+
+    row.innerHTML = `
+      <input type="text" class="zone-item-letter" maxlength="1"
+             data-english="${item.englishName.replace(/"/g, '&quot;')}"
+             value="${savedLetter}" autocomplete="off">
+      <div class="zone-item-names">
+        <div class="zone-item-spanish">${item.spanishName || '—'}</div>
+        <div class="zone-item-english">${item.englishName}</div>
+      </div>
+    `;
+
+    list.appendChild(row);
+  }
+
+  dom.zoneModal().classList.add('visible');
+}
+
+/**
+ * Read zone letter assignments from the modal and generate labels.
+ */
+function applyZoneAssignments() {
+  const inputs = dom.zoneItemsList().querySelectorAll('.zone-item-letter');
+  swapZoneAssignments.clear();
+
+  for (const input of inputs) {
+    const englishName = input.dataset.english;
+    const letter = input.value.trim().toUpperCase();
+    if (letter) {
+      // Find the Spanish name from the same row
+      const row = input.closest('.zone-item-row');
+      const spanishName = row.querySelector('.zone-item-spanish').textContent;
+      swapZoneAssignments.set(englishName, { letter, spanishName: spanishName === '—' ? '' : spanishName });
+    }
+  }
+
+  dom.zoneModal().classList.remove('visible');
+  generateLabels();
+}
+
+/**
+ * Tally all items across all members and render totals on screen.
+ */
+function renderItemTotals() {
+  const totals = new Map(); // itemKey → { name, qty, category, color }
+
+  for (const member of labelMembers) {
+    for (const item of member.labelItems) {
+      // Build a display name based on category
+      let displayName = '';
+      if (item.category === 'produce') {
+        const assignment = swapZoneAssignments.get(item.englishName);
+        const letter = assignment?.letter || item.existingLetter || '?';
+        displayName = `[${letter}] ${item.englishName}`;
+      } else if (item.category === 'share' || item.category === 'subscription') {
+        displayName = item.englishName;
+      } else {
+        const zoneName = ADDON_CATEGORIES[item.category]?.label?.toUpperCase() || item.category.toUpperCase();
+        displayName = `[${zoneName}] ${item.englishName}`;
+      }
+
+      const key = displayName;
+      if (totals.has(key)) {
+        totals.get(key).qty += item.qty;
+      } else {
+        totals.set(key, {
+          name: displayName,
+          qty: item.qty,
+          category: item.category,
+          colorCode: item.colorCode,
+        });
+      }
+    }
+  }
+
+  // Only tally produce swap items
+  const produceItems = [];
+  for (const entry of totals.values()) {
+    if (entry.category === 'produce') {
+      produceItems.push(entry);
+    }
+  }
+
+  // Sort alphabetically
+  produceItems.sort((a, b) => a.name.localeCompare(b.name));
+
+  // Member count chip in the controls bar
+  const memberCountEl = document.getElementById('labelMemberCount');
+  if (memberCountEl) {
+    memberCountEl.innerHTML = `
+      <div class="manifest-stat-chip">
+        <span class="stat-number">${labelMembers.length}</span> Members
+      </div>
+    `;
+  }
+
+  // Build totals table in sidebar
+  const statsEl = dom.labelStatsContainer();
+  let html = `
+    <div class="label-totals-table">
+      <h3 class="label-totals-title">Produce Swap Totals</h3>
+      <table class="label-totals">
+        <thead><tr><th>Qty</th><th>Item</th></tr></thead>
+        <tbody>
+  `;
+
+  for (const item of produceItems) {
+    let style = '';
+    if (item.colorCode) {
+      style = `style="color:#${item.colorCode}"`;
+    }
+    const highlight = item.qty >= 2 ? ' class="label-total-highlight"' : '';
+    html += `<tr${highlight}><td class="label-total-qty">${item.qty}</td><td ${style}>${item.name}</td></tr>`;
+  }
+
+  html += `</tbody></table></div>`;
+  statsEl.innerHTML = html;
+}
+
+/**
+ * Generate the packing label grid from parsed members.
+ */
+function generateLabels() {
+  const container = dom.labelPreviewContainer();
+  container.innerHTML = '';
+
+  for (const member of labelMembers) {
+    const card = document.createElement('div');
+    card.className = 'label-card';
+
+    // Determine if customized (Comments contains a comma)
+    const isCustomized = member.comments && member.comments.includes(',');
+    const asterisk = isCustomized ? '*' : '';
+
+    // Header: #BoxNum - FirstName LastName*
+    const header = document.createElement('div');
+    header.className = 'label-header';
+    header.textContent = `#${member.boxNumber} - ${member.firstName} ${member.lastName}${asterisk}`;
+    card.appendChild(header);
+
+    // Sub-header: Route - Street Address
+    const subHeader = document.createElement('div');
+    subHeader.className = 'label-subheader';
+    subHeader.textContent = `${member.route} - ${member.address1 || ''}`;
+    card.appendChild(subHeader);
+
+    // Items container
+    const itemsDiv = document.createElement('div');
+    itemsDiv.className = 'label-items';
+
+    // Use the same buildLabelLines logic for consistent ordering and colors
+    const itemLines = buildLabelLines(member);
+    for (const lineData of itemLines) {
+      const line = document.createElement('div');
+      line.className = 'label-item';
+
+      if (lineData.text === '') {
+        // Blank separator line
+        line.style.height = '6px';
+      } else {
+        line.textContent = lineData.text;
+        line.style.color = `rgb(${lineData.color[0]}, ${lineData.color[1]}, ${lineData.color[2]})`;
+
+        if (lineData.underline) {
+          line.style.textDecoration = 'underline';
+        }
+        if (lineData.highlight) {
+          line.style.backgroundColor = '#fef9c3';
+        }
+      }
+
+      itemsDiv.appendChild(line);
+    }
+
+    card.appendChild(itemsDiv);
+
+    container.appendChild(card);
+  }
+
+  // Show item totals summary
+  renderItemTotals();
+}
+
+/**
+ * Build the sorted item lines for a single member's label.
+ * Order: Bread/Milk → Produce Shares → Eggs → [gap] → CSA Swaps → [gap] → Add-ons
+ * Returns array of { text, color, underline, highlight } objects.
+ */
+function buildLabelLines(member) {
+  const lines = [];
+
+  const breadMilk = [];   // bread & milk shares (top)
+  const shares = [];      // produce shares (Half Share, etc.)
+  const eggs = [];        // egg shares
+  const produceSwaps = [];
+  const addons = [];
+
+  for (const item of member.labelItems) {
+    const lower = item.englishName.toLowerCase();
+    const isBread = /bread/i.test(lower);
+    const isMilk = /milk/i.test(lower);
+    const isEgg = /egg/i.test(lower);
+
+    switch (item.category) {
+      case 'share':
+      case 'subscription':
+        if (isBread) {
+          breadMilk.push({ ...item, _subType: 'bread' });
+        } else if (isMilk) {
+          breadMilk.push({ ...item, _subType: 'milk' });
+        } else if (isEgg) {
+          eggs.push(item);
+        } else {
+          shares.push(item);
+        }
+        break;
+      case 'produce':
+        produceSwaps.push(item);
+        break;
+      default:
+        addons.push(item);
+    }
+  }
+
+  // 1. Bread & Milk shares (orange for bread, blue for milk)
+  for (const item of breadMilk) {
+    const text = `${item.qty} ${item.englishName}`;
+    const color = item._subType === 'bread' ? [234, 138, 30] : [59, 130, 246]; // orange / blue
+    lines.push({ text, color, underline: item.qty >= 2, highlight: item.qty >= 2 });
+  }
+
+  // 2. Produce shares (Half Share, Full Share, etc.)
+  for (const item of shares) {
+    lines.push({ text: `${item.qty} ${item.englishName}`, color: [0, 0, 0], underline: false, highlight: item.qty >= 2 });
+  }
+
+  // 3. Egg shares
+  for (const item of eggs) {
+    let text = `${item.qty} ${item.englishName}`;
+    let color = [0, 0, 0];
+    if (item.colorCode) {
+      const r = parseInt(item.colorCode.substring(0, 2), 16);
+      const g = parseInt(item.colorCode.substring(2, 4), 16);
+      const b = parseInt(item.colorCode.substring(4, 6), 16);
+      color = [r, g, b];
+    }
+    lines.push({ text, color, underline: item.qty >= 2, highlight: item.qty >= 2 });
+  }
+
+  // 4. Blank line before CSA swaps (if there are swaps)
+  if (produceSwaps.length > 0) {
+    lines.push({ text: '', color: [0, 0, 0], underline: false, highlight: false });
+  }
+
+  // 5. Produce swaps — sorted by zone letter
+  const sortedSwaps = [...produceSwaps].sort((a, b) => {
+    const letterA = swapZoneAssignments.get(a.englishName)?.letter || a.existingLetter || 'Z';
+    const letterB = swapZoneAssignments.get(b.englishName)?.letter || b.existingLetter || 'Z';
+    if (letterA !== letterB) return letterA.localeCompare(letterB);
+    return a.englishName.localeCompare(b.englishName);
+  });
+
+  for (const item of sortedSwaps) {
+    const assignment = swapZoneAssignments.get(item.englishName);
+    const letter = assignment?.letter || item.existingLetter || '?';
+    const spanish = assignment?.spanishName || item.spanishName || '';
+    const bracketText = spanish ? `[${letter} -${spanish}]` : `[${letter}]`;
+    const text = `${bracketText} ${item.qty} ${item.englishName}`;
+
+    let color = [0, 0, 0];
+    if (item.colorCode) {
+      const r = parseInt(item.colorCode.substring(0, 2), 16);
+      const g = parseInt(item.colorCode.substring(2, 4), 16);
+      const b = parseInt(item.colorCode.substring(4, 6), 16);
+      color = [r, g, b];
+    }
+    lines.push({ text, color, underline: item.qty >= 2, highlight: item.qty >= 2 });
+  }
+
+  // 6. Blank line before add-ons (if there are add-ons)
+  if (addons.length > 0) {
+    lines.push({ text: '', color: [0, 0, 0], underline: false, highlight: false });
+  }
+
+  // 7. Add-ons — sorted by packing zone, then alphabetically
+  const ADDON_ZONE_ORDER = ['MEAT', 'COLD', 'CHEESE', 'FRUIT', 'DRY', 'SHROOMS'];
+  const sortedAddons = [...addons].sort((a, b) => {
+    const idxA = ADDON_ZONE_ORDER.indexOf(a.category);
+    const idxB = ADDON_ZONE_ORDER.indexOf(b.category);
+    const orderA = idxA >= 0 ? idxA : ADDON_ZONE_ORDER.length;
+    const orderB = idxB >= 0 ? idxB : ADDON_ZONE_ORDER.length;
+    if (orderA !== orderB) return orderA - orderB;
+    return a.englishName.localeCompare(b.englishName);
+  });
+
+  for (const item of sortedAddons) {
+    const zoneName = ADDON_CATEGORIES[item.category]?.label?.toUpperCase() || item.category.toUpperCase();
+    lines.push({
+      text: `[${zoneName}] ${item.qty} ${item.englishName}`,
+      color: [22, 163, 74], // green
+      underline: item.qty >= 2,
+      highlight: item.qty >= 2,
+    });
+  }
+
+  return lines;
+}
+
+/**
+ * Export packing labels as a PDF using jsPDF.
+ * Avery 5164: 6 labels per page (2 columns × 3 rows).
+ * Label: 4" × 3.33", top margin 0.5", side margin ~0.156", gutter ~0.188".
+ */
+function exportLabelsPDF() {
+  if (labelMembers.length === 0) return;
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'in', format: 'letter' });
+
+  // Avery 5164 layout constants (inches)
+  const PAGE_W = 8.5;
+  const LABEL_W = 4.0;
+  const LABEL_H = 3.3333;
+  const MARGIN_TOP = 0.5;
+  const MARGIN_LEFT = 0.15625;
+  const GUTTER = (PAGE_W - 2 * MARGIN_LEFT - 2 * LABEL_W);
+  const COLS = 2;
+  const ROWS = 3;
+  const LABELS_PER_PAGE = COLS * ROWS;
+
+  // Text layout within a label (internal padding)
+  const PAD_X = 0.25;
+  const PAD_TOP = 0.15;
+  const TEXT_W = LABEL_W - 2 * PAD_X;
+
+  const HEADER_SIZE = 16; // pt
+  const SUBHEADER_SIZE = 9; // pt
+  const BODY_SIZE = 12;   // pt
+  const MIN_BODY_SIZE = 8;
+
+  // Line height = text height + 10% gap (minimum)
+  // fontSize / 72 = text height in inches, × 1.1 for 10% inter-line gap
+  const LINE_H = (BODY_SIZE / 72) * 1.1;
+  const MIN_LINE_H = (MIN_BODY_SIZE / 72) * 1.1;
+
+  // Available height for items (label height minus header+subheader space and bottom pad)
+  // Header space = top pad + header offset + sub-header gap + line gap
+  const HEADER_OFFSET = 0.24;
+  const HEADER_SPACE = PAD_TOP + HEADER_OFFSET + 0.18 + LINE_H;
+  const AVAIL_H = LABEL_H - HEADER_SPACE - PAD_TOP; // bottom pad instead of footer
+
+  // Calculate max lines that fit at minimum font size
+  const maxLinesPerLabel = Math.floor(AVAIL_H / MIN_LINE_H);
+
+  // --- Pre-build label slots (splitting overflows) ---
+  const labelSlots = []; // { member, lines, isCont, isOverflow }
+
+  for (const member of labelMembers) {
+    const allLines = buildLabelLines(member);
+
+    if (allLines.length <= maxLinesPerLabel) {
+      // Fits on one label (may shrink but won't go below min)
+      labelSlots.push({
+        member,
+        lines: allLines,
+        isCont: false,
+        isOverflow: false,
+      });
+    } else {
+      // Split across multiple labels — red header
+      let remaining = [...allLines];
+      let first = true;
+      while (remaining.length > 0) {
+        const chunk = remaining.splice(0, maxLinesPerLabel);
+        labelSlots.push({
+          member,
+          lines: chunk,
+          isCont: !first,
+          isOverflow: true, // red header
+        });
+        first = false;
+      }
+    }
+  }
+
+  // --- Render all label slots ---
+  for (let i = 0; i < labelSlots.length; i++) {
+    const slot = labelSlots[i];
+    const { member, lines, isCont, isOverflow } = slot;
+    const posOnPage = i % LABELS_PER_PAGE;
+    const col = posOnPage % COLS;
+    const row = Math.floor(posOnPage / COLS);
+
+    if (i > 0 && posOnPage === 0) doc.addPage();
+
+    // Label origin
+    const labelX = MARGIN_LEFT + col * (LABEL_W + GUTTER);
+    const labelY = MARGIN_TOP + row * LABEL_H;
+    const textX = labelX + PAD_X;
+    let curY = labelY + PAD_TOP;
+
+    // --- HEADER ---
+    const isCustomized = member.comments && member.comments.includes(',');
+    const asterisk = isCustomized ? '*' : '';
+    let headerText = `#${member.boxNumber} - ${member.firstName} ${member.lastName}${asterisk}`;
+    if (isCont) headerText += ' (cont.)';
+
+    doc.setFontSize(HEADER_SIZE);
+    doc.setFont(undefined, 'bold');
+    // Red header for overflow members, black otherwise
+    if (isOverflow) {
+      doc.setTextColor(220, 38, 38);
+    } else {
+      doc.setTextColor(0, 0, 0);
+    }
+    curY += HEADER_OFFSET;
+    doc.text(headerText, labelX + LABEL_W / 2, curY, { align: 'center' });
+    curY += 0.18;
+
+    // --- SUB-HEADER: Route - Address ---
+    doc.setFontSize(SUBHEADER_SIZE);
+    doc.setFont(undefined, 'normal');
+    doc.setTextColor(80, 80, 80);
+    const subText = `${member.route} - ${member.address1 || ''}`;
+    let displaySub = subText;
+    if (doc.getTextWidth(displaySub) > TEXT_W) {
+      while (displaySub.length > 0 && doc.getTextWidth(displaySub + '...') > TEXT_W) {
+        displaySub = displaySub.slice(0, -1);
+      }
+      displaySub += '...';
+    }
+    doc.text(displaySub, labelX + LABEL_W / 2, curY, { align: 'center' });
+    curY += LINE_H; // gap after sub-header
+
+    // --- ITEM LINES (auto-shrink within this slot) ---
+    const maxItemY = labelY + LABEL_H - PAD_TOP; // use full label, no footer
+    const availableH = maxItemY - curY;
+
+    let bodySize = BODY_SIZE;
+    let lineH = LINE_H;
+    const neededH = lines.length * LINE_H;
+    if (neededH > availableH && lines.length > 0) {
+      const scale = availableH / neededH;
+      bodySize = Math.max(BODY_SIZE * scale, MIN_BODY_SIZE);
+      // Enforce minimum line spacing: at least 10% gap at the shrunken size
+      const minLineHAtSize = (bodySize / 72) * 1.1;
+      lineH = Math.max(availableH / lines.length, minLineHAtSize);
+    }
+
+    doc.setFontSize(bodySize);
+
+    for (const line of lines) {
+      if (curY > maxItemY) break;
+
+      if (line.highlight) {
+        doc.setFillColor(255, 255, 0);
+        const textWidth = Math.min(doc.getTextWidth(line.text), TEXT_W);
+        const ascent = (bodySize / 72) * 0.75; // font ascent in inches
+        doc.rect(textX - 0.02, curY - ascent, textWidth + 0.04, lineH, 'F');
+      }
+
+      doc.setTextColor(line.color[0], line.color[1], line.color[2]);
+      doc.setFont(undefined, 'normal');
+
+      // Truncate text that overflows the label width (clip, don't wrap)
+      let displayText = line.text;
+      if (doc.getTextWidth(displayText) > TEXT_W) {
+        while (displayText.length > 0 && doc.getTextWidth(displayText + '...') > TEXT_W) {
+          displayText = displayText.slice(0, -1);
+        }
+        displayText += '...';
+      }
+      doc.text(displayText, textX, curY);
+
+      if (line.underline) {
+        const textWidth = Math.min(doc.getTextWidth(displayText), TEXT_W);
+        doc.setDrawColor(line.color[0], line.color[1], line.color[2]);
+        doc.setLineWidth(0.005);
+        doc.line(textX, curY + 0.02, textX + textWidth, curY + 0.02);
+      }
+      curY += lineH;
+    }
+  }
+
+  // Build filename from date
+  const firstDate = labelMembers[0]?.date || 'labels';
+  const safeName = firstDate.replace(/[^a-zA-Z0-9]/g, '_');
+  doc.save(`Packing_Labels_${safeName}.pdf`);
+}
+
+// =============================================
 // Event Bindings
 // =============================================
 
@@ -2152,6 +2875,73 @@ document.addEventListener('DOMContentLoaded', () => {
       dom.manifestTableContainer().innerHTML = '';
       dom.manifestStatsContainer().innerHTML = '';
       dom.manifestFileInput().value = '';
+    });
+  }
+
+  // ============================
+  // Label Maker Event Wiring
+  // ============================
+
+  // Label file upload — drag & drop
+  const labelZone = dom.labelUploadZone();
+  const labelInput = dom.labelFileInput();
+
+  if (labelZone) {
+    labelZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      labelZone.classList.add('dragover');
+    });
+    labelZone.addEventListener('dragleave', () => {
+      labelZone.classList.remove('dragover');
+    });
+    labelZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      labelZone.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      handleLabelFile(file);
+    });
+    labelZone.addEventListener('click', (e) => {
+      if (e.target.tagName !== 'INPUT') labelInput.click();
+    });
+  }
+  if (labelInput) {
+    labelInput.addEventListener('change', (e) => {
+      handleLabelFile(e.target.files[0]);
+    });
+  }
+  const labelUpBtn = dom.labelUploadBtn();
+  if (labelUpBtn) {
+    labelUpBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      labelInput.click();
+    });
+  }
+
+  // Print labels
+  const printBtn = dom.printLabelsBtn();
+  if (printBtn) printBtn.addEventListener('click', exportLabelsPDF);
+
+  // Zone modal
+  const zoneClose = dom.zoneModalClose();
+  if (zoneClose) {
+    zoneClose.addEventListener('click', () => {
+      dom.zoneModal().classList.remove('visible');
+    });
+  }
+  const zoneApply = dom.zoneApplyBtn();
+  if (zoneApply) zoneApply.addEventListener('click', applyZoneAssignments);
+
+  // Label change file
+  const lChangeBtn = dom.labelChangeFileBtn();
+  if (lChangeBtn) {
+    lChangeBtn.addEventListener('click', () => {
+      labelMembers = [];
+      swapZoneAssignments.clear();
+      dom.labelSection().style.display = 'none';
+      dom.labelUploadSection().style.display = 'flex';
+      dom.labelPreviewContainer().innerHTML = '';
+      dom.labelStatsContainer().innerHTML = '';
+      dom.labelFileInput().value = '';
     });
   }
 });
